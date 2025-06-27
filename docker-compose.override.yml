@@ -1,0 +1,11 @@
+version: '3.8'
+
+services:
+  qr-reader-api:
+    volumes:
+      - ./:/app
+    ports:
+      - "8000:8000"
+    environment:
+      - DEBUG=true
+    command: ["python", "run.py"]

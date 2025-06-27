@@ -1,0 +1,3 @@
+@echo off
+echo Starting QR Code Reader API...
+python run.py
