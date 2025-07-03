@@ -442,6 +442,30 @@ def add_overlay(qr_img: Image.Image, overlay_text: str, overlay_color: str = "#F
         font_size = int(rect_height / 4.0)  # Reduced from 3.5 to 4.0 for even smaller text
         font = None
         
+        # Function to load a font from local path or URL
+        def load_font(path, size):
+            try:
+                if path.startswith('http'):
+                    if HAS_REQUESTS:
+                        # Download font from URL if requests is available
+                        try:
+                            response = requests.get(path)
+                            if response.status_code == 200:
+                                # Load font from the downloaded content
+                                return ImageFont.truetype(BytesIO(response.content), size=size)
+                            else:
+                                print(f"Failed to download font: {response.status_code}")
+                        except Exception as e:
+                            print(f"Error downloading font: {str(e)}")
+                    # If requests failed or not available, fall back to default
+                    return None
+                else:
+                    # Load font from local file
+                    return ImageFont.truetype(path, size=size)
+            except Exception as e:
+                print(f"Error loading font {path}: {str(e)}")
+                return None
+                
         # Try to find and load a Thai-compatible font
         thai_font_paths = [
             "https://cdn.jsdelivr.net/gh/lazywasabi/thai-web-fonts@7/fonts/Sarabun/Sarabun-Light.woff2"
@@ -449,13 +473,10 @@ def add_overlay(qr_img: Image.Image, overlay_text: str, overlay_color: str = "#F
         
         # Try each font path until a valid one is found
         for font_path in thai_font_paths:
-            try:
-                if os.path.exists(font_path):
-                    font = ImageFont.truetype(font_path, font_size)
-                    break
-            except Exception as e:
-                print(f"Error loading font {font_path}: {e}")
-        
+            font = load_font(font_path, font_size)
+            if font:
+                break
+                
         # If no font was found, use default
         if not font:
             font = ImageFont.load_default()
