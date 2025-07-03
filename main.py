@@ -7,8 +7,14 @@ import base64
 import io
 import os
 import time
-import requests
 from io import BytesIO
+
+# Try to import requests but don't fail if not available
+try:
+    import requests
+    HAS_REQUESTS = True
+except ImportError:
+    HAS_REQUESTS = False
 from typing import Optional, List, Dict, Any
 from dotenv import load_dotenv
 import uvicorn
@@ -495,14 +501,20 @@ def add_overlay(qr_img: Image.Image, overlay_text: str, overlay_color: str = "#F
         def load_font(path, size):
             try:
                 if path.startswith('http'):
-                    # Download font from URL
-                    response = requests.get(path)
-                    if response.status_code == 200:
-                        # Load font from the downloaded content
-                        return ImageFont.truetype(BytesIO(response.content), size=size)
-                    else:
-                        print(f"Failed to download font: {response.status_code}")
-                        return None
+                    if HAS_REQUESTS:
+                        # Download font from URL if requests is available
+                        try:
+                            response = requests.get(path)
+                            if response.status_code == 200:
+                                # Load font from the downloaded content
+                                return ImageFont.truetype(BytesIO(response.content), size=size)
+                            else:
+                                print(f"Failed to download font: {response.status_code}")
+                        except Exception as e:
+                            print(f"Error downloading font: {str(e)}")
+                    # If requests failed or not available, fall back to default
+                    print("Using default font because online font could not be loaded")
+                    return ImageFont.load_default()
                 else:
                     # Load font from local file
                     return ImageFont.truetype(path, size=size)
@@ -533,7 +545,13 @@ def add_overlay(qr_img: Image.Image, overlay_text: str, overlay_color: str = "#F
         
         # Try to find a font that supports Thai characters for border text
         thai_fonts = [
+            # Include both online and local Thai fonts for better compatibility
             "https://cdn.jsdelivr.net/gh/lazywasabi/thai-web-fonts@7/fonts/Sarabun/Sarabun-Light.woff2",
+            "C:/Windows/Fonts/Tahoma.ttf",       # Common Thai-supporting font in Windows
+            "C:/Windows/Fonts/Arial.ttf",        # Arial has some Thai support
+            "C:/Windows/Fonts/THSarabunNew.ttf", # Common Thai font
+            "C:/Windows/Fonts/Leelawadee.ttf",   # Thai font in Windows
+            "C:/Windows/Fonts/Segoe UI.ttf"      # Some Thai support
         ]
         
         # Use first available font (preferring URLs for Thai support)
