@@ -4,9 +4,11 @@ from fastapi.responses import JSONResponse
 import cv2
 import numpy as np
 import base64
-import time
-import os
 import io
+import os
+import time
+import requests
+from io import BytesIO
 from typing import Optional, List, Dict, Any
 from dotenv import load_dotenv
 import uvicorn
@@ -489,62 +491,60 @@ def add_overlay(qr_img: Image.Image, overlay_text: str, overlay_color: str = "#F
         
         draw = ImageDraw.Draw(canvas)
         
-        try:
-            # Try to find a font that supports Thai characters for border text
-            thai_fonts = [
-                "C:/Windows/Fonts/Tahoma.ttf",       # Common Thai-supporting font in Windows
-                "C:/Windows/Fonts/Arial.ttf",        # Arial has some Thai support
-                "C:/Windows/Fonts/THSarabunNew.ttf", # Common Thai font
-                "C:/Windows/Fonts/Leelawadee.ttf",  # Thai font in Windows
-                "C:/Windows/Fonts/Malgun.ttf",       # Some Thai support
-                "C:/Windows/Fonts/Microsoft Sans Serif.ttf", # Some Thai support
-                "C:/Windows/Fonts/Segoe UI.ttf"     # Some Thai support
-            ]
+        # Function to load a font from local path or URL
+        def load_font(path, size):
+            try:
+                if path.startswith('http'):
+                    # Download font from URL
+                    response = requests.get(path)
+                    if response.status_code == 200:
+                        # Load font from the downloaded content
+                        return ImageFont.truetype(BytesIO(response.content), size=size)
+                    else:
+                        print(f"Failed to download font: {response.status_code}")
+                        return None
+                else:
+                    # Load font from local file
+                    return ImageFont.truetype(path, size=size)
+            except Exception as e:
+                print(f"Error loading font {path}: {str(e)}")
+                return None
         
-            # Try each font until we find one
-            font = None
-            for font_path in thai_fonts:
-                try:
-                    # Use a default base size that we'll adjust for each side
-                    base_font_size = int(padding/1.5)  # Base font size
-                    font = ImageFont.truetype(font_path, size=base_font_size)
-                    break  # Stop if we found a working font
-                except IOError:
-                    continue
-                
-                # If no Thai font found, use default
-                if font is None:
-                    font = ImageFont.load_default()
-        except IOError:
-            font = ImageFont.load_default()
+        # Function to find optimal font size for a given width
+        def get_optimal_font_size(text, available_width, font_path, min_size=12, max_size=50):
+            # Try each font size from largest to smallest
+            for size in range(max_size, min_size-1, -1):
+                test_font = load_font(font_path, size)
+                if test_font:
+                    try:
+                        text_width = draw.textlength(text, font=test_font)
+                        if text_width <= available_width * 0.95:  # 95% of available width
+                            return size, test_font
+                    except Exception as e:
+                        print(f"Font size error: {str(e)}")
+                        continue
+            
+            # If we couldn't find a good size, return the minimum size or default
+            min_font = load_font(font_path, min_size)
+            if min_font:
+                return min_size, min_font
+            else:
+                return min_size, ImageFont.load_default()
+        
+        # Try to find a font that supports Thai characters for border text
+        thai_fonts = [
+            "https://cdn.jsdelivr.net/gh/lazywasabi/thai-web-fonts@7/fonts/Sarabun/Sarabun-Light.woff2",
+        ]
+        
+        # Use first available font (preferring URLs for Thai support)
+        font_path = thai_fonts[0] if thai_fonts else None
         
         # Calculate positions and dimensions
         canvas_width, canvas_height = canvas.size
         
-        # Calculate font sizes for each side to fit the text properly
-        # Function to find optimal font size for a given width
-        def get_optimal_font_size(text, available_width, font_path, min_size=12, max_size=50):
-            for size in range(max_size, min_size-1, -1):
-                try:
-                    test_font = ImageFont.truetype(font_path, size=size)
-                    text_width = draw.textlength(text, font=test_font)
-                    if text_width <= available_width * 0.95:  # 95% of available width
-                        return size, test_font
-                except Exception:
-                    continue
-            # If we couldn't find a good size, return the minimum
-            return min_size, ImageFont.truetype(font_path, size=min_size) if font_path else ImageFont.load_default()
-        
-        # Get font path that worked
-        font_path = next((path for path in thai_fonts if os.path.exists(path)), None)
-        
-        # Top and bottom borders (horizontal text)
         # Available width is the full canvas width
         horizontal_font_size, horizontal_font = get_optimal_font_size(
             border_text, canvas_width - padding/2, font_path, max_size=40)
-        
-        # Draw border text on three sides with overlap onto QR code (omitting bottom)
-        # Top border - horizontal text
         text_width = draw.textlength(border_text, font=horizontal_font)
         top_x = int((canvas_width - text_width) / 2)  # Center text
         top_y = int(padding//3)  # Move further inside to overlap QR code more
