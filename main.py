@@ -546,12 +546,7 @@ def add_overlay(qr_img: Image.Image, overlay_text: str, overlay_color: str = "#F
         # Try to find a font that supports Thai characters for border text
         thai_fonts = [
             # Include both online and local Thai fonts for better compatibility
-            "https://cdn.jsdelivr.net/gh/lazywasabi/thai-web-fonts@7/fonts/Sarabun/Sarabun-Light.woff2",
-            "C:/Windows/Fonts/Tahoma.ttf",       # Common Thai-supporting font in Windows
-            "C:/Windows/Fonts/Arial.ttf",        # Arial has some Thai support
-            "C:/Windows/Fonts/THSarabunNew.ttf", # Common Thai font
-            "C:/Windows/Fonts/Leelawadee.ttf",   # Thai font in Windows
-            "C:/Windows/Fonts/Segoe UI.ttf"      # Some Thai support
+            "https://cdn.jsdelivr.net/gh/lazywasabi/thai-web-fonts@7/fonts/Sarabun/Sarabun-Light.woff2"
         ]
         
         # Use first available font (preferring URLs for Thai support)
