@@ -444,12 +444,7 @@ def add_overlay(qr_img: Image.Image, overlay_text: str, overlay_color: str = "#F
         
         # Try to find and load a Thai-compatible font
         thai_font_paths = [
-            "C:\\Windows\\Fonts\\Tahoma.ttf", 
-            "C:\\Windows\\Fonts\\THSarabunNew.ttf",
-            "C:\\Windows\\Fonts\\Leelawadee.ttf", 
-            "C:\\Windows\\Fonts\\LeelawUI.ttf",
-            "C:\\Windows\\Fonts\\segoeui.ttf",  # Fallback to Segoe UI which has some Thai support
-            "C:\\Windows\\Fonts\\Arial.ttf"     # Fallback to Arial
+            "https://cdn.jsdelivr.net/gh/lazywasabi/thai-web-fonts@7/fonts/Sarabun/Sarabun-Light.woff2"
         ]
         
         # Try each font path until a valid one is found
