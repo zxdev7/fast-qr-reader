@@ -6,9 +6,12 @@ import numpy as np
 import base64
 import time
 import os
+import io
 from typing import Optional, List, Dict, Any
 from dotenv import load_dotenv
 import uvicorn
+import qrcode
+from PIL import Image, ImageDraw, ImageFont
 from pydantic import BaseModel
 
 # Load environment variables
@@ -48,6 +51,14 @@ class Base64Image(BaseModel):
     """Request model for base64 encoded image"""
     image: str
     detailed: bool = False
+
+class QRCodePayload(BaseModel):
+    """Request model for QR code generation"""
+    payload: str
+    overlay_text: Optional[str] = None
+    overlay_color: Optional[str] = "#FFFF00"  # Default yellow color
+    border_text: Optional[str] = None
+    error_correction: Optional[int] = 1  # 0-3 for L, M, Q, H
 
 def read_qr_opencv(image: np.ndarray) -> List[Dict[str, Any]]:
     """Read QR codes using OpenCV QRCodeDetector"""
@@ -312,6 +323,343 @@ async def read_qr_advanced(file: UploadFile = File(...), token_verified: bool = 
     }
     
     return response
+
+def generate_qr_code(payload: str, error_correction: int = 1) -> Image.Image:
+    """Generate a QR code from payload"""
+    # Set error correction level (0-3 for L, M, Q, H)
+    error_levels = [qrcode.constants.ERROR_CORRECT_L, 
+                  qrcode.constants.ERROR_CORRECT_M,
+                  qrcode.constants.ERROR_CORRECT_Q, 
+                  qrcode.constants.ERROR_CORRECT_H]
+    
+    # Create QR code with minimal border (1 instead of default 4) and maximize box size
+    qr = qrcode.QRCode(
+        version=None,  # Auto-determine version based on payload size
+        error_correction=error_levels[min(error_correction, 3)],
+        box_size=20,  # Much larger box size to fill more of the frame
+        border=1,     # Minimal border (1 is the minimum required for QR code standard)
+    )
+    
+    qr.add_data(payload)
+    qr.make(fit=True)
+    
+    # Create QR code image
+    img = qr.make_image(fill_color="black", back_color="white")
+    
+    return img
+
+def add_overlay(qr_img: Image.Image, overlay_text: str, overlay_color: str = "#FFFF00", 
+               border_text: str = None) -> Image.Image:
+    """Add overlay to QR code image similar to example"""
+    # Get QR code dimensions
+    qr_width, qr_height = qr_img.size
+    
+    # Create a copy of the QR image
+    final_img = qr_img.copy()
+    
+    # If overlay text is provided, add a colored rectangle with text
+    if overlay_text:
+        draw = ImageDraw.Draw(final_img)
+        
+        # Create much smaller overlay rectangle in the center
+        rect_width = int(qr_width * 0.4)  # 40% of QR width (reduced from 50%)
+        rect_height = int(qr_height * 0.14)  # 14% of QR height (reduced from 18%)
+        
+        # Position the rectangle in the center
+        left = (qr_width - rect_width) // 2
+        top = (qr_height - rect_height) // 2
+        right = left + rect_width
+        bottom = top + rect_height
+        
+        # Parse overlay color to add transparency (50% opacity)
+        # If overlay_color is a hex string, convert to RGBA with 50% opacity
+        if isinstance(overlay_color, str) and overlay_color.startswith('#'):
+            # Default to yellow with 50% opacity if parsing fails
+            try:
+                # Convert hex to RGB
+                r = int(overlay_color[1:3], 16) if len(overlay_color) >= 3 else 255
+                g = int(overlay_color[3:5], 16) if len(overlay_color) >= 5 else 255
+                b = int(overlay_color[5:7], 16) if len(overlay_color) >= 7 else 0
+                # Use yellow with 70% opacity (77) for better QR visibility
+                overlay_color = (r, g, b, 77)
+            except ValueError:
+                overlay_color = (255, 255, 0, 77)  # Yellow with 70% opacity
+        else:
+            # Default to yellow with 70% opacity
+            overlay_color = (255, 255, 0, 77)
+            
+        # Convert to RGBA if needed for transparency support
+        if final_img.mode != 'RGBA':
+            final_img = final_img.convert('RGBA')
+            
+        # Draw the colored rectangle with transparency
+        draw = ImageDraw.Draw(final_img, 'RGBA')
+        draw.rectangle([left, top, right, bottom], fill=overlay_color)
+        
+        # Function to wrap text to fit within width
+        def wrap_text(text, font, max_width):
+            words = text.split(' ')
+            lines = []
+            line = []
+            current_width = 0
+
+            # Special handling for Thai text (which often doesn't use spaces)
+            # If no spaces in text, try to break by character groups (roughly)
+            if len(words) == 1 and len(text) > 15:
+                # For Thai text without spaces, break into roughly equal chunks
+                char_per_line = max(5, len(text) // 2)  # At least 5 chars per line, or divide by 2
+                idx = 0
+                while idx < len(text):
+                    lines.append(text[idx:idx+char_per_line])
+                    idx += char_per_line
+                return lines
+                
+            # For normal text with spaces
+            for word in words:
+                word_width = font.getlength(word + ' ')
+                if current_width + word_width <= max_width:
+                    line.append(word)
+                    current_width += word_width
+                else:
+                    lines.append(' '.join(line))
+                    line = [word]
+                    current_width = font.getlength(word + ' ')
+            
+            if line:
+                lines.append(' '.join(line))
+                
+            return lines
+        
+        # Find best size for text - even smaller than before
+        font_size = int(rect_height / 4.0)  # Reduced from 3.5 to 4.0 for even smaller text
+        font = None
+        
+        # Try to find and load a Thai-compatible font
+        thai_font_paths = [
+            "C:\\Windows\\Fonts\\Tahoma.ttf", 
+            "C:\\Windows\\Fonts\\THSarabunNew.ttf",
+            "C:\\Windows\\Fonts\\Leelawadee.ttf", 
+            "C:\\Windows\\Fonts\\LeelawUI.ttf",
+            "C:\\Windows\\Fonts\\segoeui.ttf",  # Fallback to Segoe UI which has some Thai support
+            "C:\\Windows\\Fonts\\Arial.ttf"     # Fallback to Arial
+        ]
+        
+        # Try each font path until a valid one is found
+        for font_path in thai_font_paths:
+            try:
+                if os.path.exists(font_path):
+                    font = ImageFont.truetype(font_path, font_size)
+                    break
+            except Exception as e:
+                print(f"Error loading font {font_path}: {e}")
+        
+        # If no font was found, use default
+        if not font:
+            font = ImageFont.load_default()
+            font_size = 12  # Even smaller default size
+        
+        # Wrap text to fit in rectangle
+        wrapped_text = wrap_text(overlay_text, font, rect_width - 10)  # 5px padding on each side
+        
+        # Calculate total text height
+        line_height = font_size + 2  # Add a small gap between lines
+        total_text_height = len(wrapped_text) * line_height
+        
+        # Draw each line of text
+        y_offset = top + (rect_height - total_text_height) // 2  # Center vertically
+        
+        for line in wrapped_text:
+            # Get line width for horizontal centering
+            text_bbox = font.getbbox(line)
+            text_width = text_bbox[2] - text_bbox[0]
+            
+            # Calculate position to center this line
+            text_x = left + (rect_width - text_width) // 2
+            
+            # Draw the text in red color
+            draw.text((text_x, y_offset), line, fill="#FF0000", font=font)
+            y_offset += line_height  # Move to next line
+    
+    # If border text is provided, add text around the border
+    if border_text:
+        # Create a canvas with minimal padding and transparent background
+        padding = 30  # Reduced padding so text overlaps with QR code slightly
+        canvas = Image.new('RGBA', (qr_width + padding*2, qr_height + padding*2), (255, 255, 255, 0))
+        canvas.paste(final_img, (padding, padding))
+        
+        draw = ImageDraw.Draw(canvas)
+        
+        try:
+            # Try to find a font that supports Thai characters for border text
+            thai_fonts = [
+                "C:/Windows/Fonts/Tahoma.ttf",       # Common Thai-supporting font in Windows
+                "C:/Windows/Fonts/Arial.ttf",        # Arial has some Thai support
+                "C:/Windows/Fonts/THSarabunNew.ttf", # Common Thai font
+                "C:/Windows/Fonts/Leelawadee.ttf",  # Thai font in Windows
+                "C:/Windows/Fonts/Malgun.ttf",       # Some Thai support
+                "C:/Windows/Fonts/Microsoft Sans Serif.ttf", # Some Thai support
+                "C:/Windows/Fonts/Segoe UI.ttf"     # Some Thai support
+            ]
+        
+            # Try each font until we find one
+            font = None
+            for font_path in thai_fonts:
+                try:
+                    # Use a default base size that we'll adjust for each side
+                    base_font_size = int(padding/1.5)  # Base font size
+                    font = ImageFont.truetype(font_path, size=base_font_size)
+                    break  # Stop if we found a working font
+                except IOError:
+                    continue
+                
+                # If no Thai font found, use default
+                if font is None:
+                    font = ImageFont.load_default()
+        except IOError:
+            font = ImageFont.load_default()
+        
+        # Calculate positions and dimensions
+        canvas_width, canvas_height = canvas.size
+        
+        # Calculate font sizes for each side to fit the text properly
+        # Function to find optimal font size for a given width
+        def get_optimal_font_size(text, available_width, font_path, min_size=12, max_size=50):
+            for size in range(max_size, min_size-1, -1):
+                try:
+                    test_font = ImageFont.truetype(font_path, size=size)
+                    text_width = draw.textlength(text, font=test_font)
+                    if text_width <= available_width * 0.95:  # 95% of available width
+                        return size, test_font
+                except Exception:
+                    continue
+            # If we couldn't find a good size, return the minimum
+            return min_size, ImageFont.truetype(font_path, size=min_size) if font_path else ImageFont.load_default()
+        
+        # Get font path that worked
+        font_path = next((path for path in thai_fonts if os.path.exists(path)), None)
+        
+        # Top and bottom borders (horizontal text)
+        # Available width is the full canvas width
+        horizontal_font_size, horizontal_font = get_optimal_font_size(
+            border_text, canvas_width - padding/2, font_path, max_size=40)
+        
+        # Draw border text on three sides with overlap onto QR code (omitting bottom)
+        # Top border - horizontal text
+        text_width = draw.textlength(border_text, font=horizontal_font)
+        top_x = int((canvas_width - text_width) / 2)  # Center text
+        top_y = int(padding//3)  # Move further inside to overlap QR code more
+        draw.text((top_x, top_y), border_text, fill="#FF0000", font=horizontal_font)
+        
+        # Bottom border text removed as requested
+        
+        # Calculate vertical font size for sides
+        vertical_font_size, vertical_font = get_optimal_font_size(
+            border_text, canvas_height - padding/2, font_path, max_size=35)
+            
+        # Left border - horizontal baseline with rotated text (reading bottom to top)
+        # Calculate size first
+        font_height = vertical_font.getbbox("Áp")[3]  # Get approx font height with accents
+        text_width = int(draw.textlength(border_text, font=vertical_font))
+        
+        # Create a new image for the text (in normal horizontal orientation)
+        text_img_width = text_width + 20  # Add padding
+        text_img_height = font_height + 20  # Add padding
+        
+        # Ensure dimensions are integers
+        left_img = Image.new('RGBA', 
+                            (int(text_img_width), int(text_img_height)), 
+                            (255, 255, 255, 0))
+        left_draw = ImageDraw.Draw(left_img)
+        
+        # Draw text horizontally (normal orientation)
+        left_draw.text((10, 10), border_text, fill="#FF0000", font=vertical_font)
+        
+        # Rotate the image for the left border (to read bottom to top) - 90 degrees counter-clockwise
+        left_img = left_img.rotate(90, expand=True)
+        
+        # Paste onto the main canvas - more overlapping onto QR code
+        left_x = int(padding//2)  # Move further inside to overlap QR code more
+        left_y = int((canvas_height - left_img.height) / 2)  # Center vertically
+        canvas.paste(left_img, (left_x, left_y), left_img)
+        
+        # Right border - horizontal baseline with rotated text (reading top to bottom)
+        # Calculate size first
+        font_height = vertical_font.getbbox("Áp")[3]  # Get approx font height with accents
+        text_width = int(draw.textlength(border_text, font=vertical_font))
+        
+        # Create a new image for the text (in normal horizontal orientation)
+        text_img_width = text_width + 20  # Add padding
+        text_img_height = font_height + 20  # Add padding
+        
+        # Ensure dimensions are integers
+        right_img = Image.new('RGBA', 
+                             (int(text_img_width), int(text_img_height)), 
+                             (255, 255, 255, 0))
+        right_draw = ImageDraw.Draw(right_img)
+        
+        # Draw text horizontally (normal orientation)
+        right_draw.text((10, 10), border_text, fill="#FF0000", font=vertical_font)
+        
+        # Rotate the image for the right border (to read top to bottom) - 270 degrees (or -90 degrees)
+        right_img = right_img.rotate(270, expand=True)
+        
+        # Paste onto the main canvas - more overlapping onto QR code
+        right_x = int(canvas_width - padding//2 - right_img.width)  # Move further inside to overlap QR code more
+        right_y = int((canvas_height - right_img.height) / 2)  # Center vertically
+        canvas.paste(right_img, (right_x, right_y), right_img)
+        
+        return canvas
+    
+    return final_img
+
+@app.post("/generate-qr")
+async def generate_qr(request: QRCodePayload):  # Temporarily disabled token verification
+    """
+    Generate QR code from payload
+    
+    - **payload**: Text/URL to encode in QR code
+    - **overlay_text**: Optional text to display in center overlay
+    - **overlay_color**: Color for overlay (hex format, default: yellow)
+    - **border_text**: Optional text to display around border
+    - **error_correction**: Error correction level (0-3 for L, M, Q, H)
+    
+    Returns:
+        JSON with base64 encoded PNG image
+    """
+    start_time = time.time()
+    
+    try:
+        # Generate QR code
+        qr_img = generate_qr_code(
+            request.payload, 
+            error_correction=request.error_correction
+        )
+        
+        # Add overlay if requested
+        if request.overlay_text or request.border_text:
+            qr_img = add_overlay(
+                qr_img, 
+                request.overlay_text, 
+                request.overlay_color,
+                request.border_text
+            )
+        
+        # Convert to PNG and encode as base64
+        buffered = io.BytesIO()
+        qr_img.save(buffered, format="PNG")
+        img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
+        
+        # Prepare response
+        response = {
+            "qr_code": img_base64,
+            "payload": request.payload,
+            "processing_time": time.time() - start_time
+        }
+        
+        return response
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating QR code: {str(e)}")
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
